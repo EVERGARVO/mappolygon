@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>천안 직산 폴리곤 공유 지도</title>
+    <!-- YOUR_CLIENT_ID 부분에 네이버에서 발급받은 ID를 넣으세요 -->
+    <script type="text/javascript" src="https://openapi.map.naver.com/openapi/v3/maps.js?ncpClientId=rcr72nudd5&submodules=drawing"></script>
+</head>
+<body>
+    <div style="margin-bottom: 10px;">
+        <button onclick="exportPolygon()" style="padding:10px; background-color:#ff4c4c; color:white; border:none; border-radius:5px; cursor:pointer;">
+            1. 내가 그린 구역 좌표 추출하기 (저장용)
+        </button>
+        <button onclick="importPolygon()" style="padding:10px; background-color:#4a90e2; color:white; border:none; border-radius:5px; cursor:pointer;">
+            2. 텍스트 창의 구역 지도에 불러오기 (공유용)
+        </button>
+    </div>
+    
+    <!-- 좌표 데이터가 출력되거나, 붙여넣을 텍스트 창 -->
+    <textarea id="dataIO" placeholder="여기에 추출된 데이터가 나오거나, 공유받은 데이터를 붙여넣으세요." style="width:100%; height:80px; margin-bottom:10px;"></textarea>
+
+    <!-- 지도 영역 -->
+    <div id="map" style="width:100%; height:700px;"></div>
+
+    <script>
+        // 1. 지도 중심을 '천안시 서북구 직산읍' 부근으로 설정
+        var map = new naver.maps.Map('map', {
+            center: new naver.maps.LatLng(36.8850, 127.1436), // 직산역 인근 위경도
+            zoom: 14 // 확대 정도 (필요시 조절)
+        });
+
+        // 2. 다각형 그리기 툴 활성화
+        var drawingManager = new naver.maps.drawing.DrawingManager({
+            map: map,
+            drawingControl: [
+                naver.maps.drawing.DrawingMode.POLYGON // 다각형 모드
+            ],
+            polygonOptions: { 
+                fillColor: '#ff0000', 
+                fillOpacity: 0.3, 
+                strokeColor: '#ff0000',
+                strokeWeight: 2
+            }
+        });
+
+        // 3. 내가 그린 여러 개의 폴리곤을 텍스트(GeoJSON)로 변환해 뽑아내는 함수
+        function exportPolygon() {
+            var data = drawingManager.toGeoJson();
+            document.getElementById('dataIO').value = JSON.stringify(data);
+            alert("좌표가 추출되었습니다. 아래 텍스트창의 내용을 복사해서 따로 저장해두세요!");
+        }
+
+        // 4. 복사해둔 텍스트를 지도 위에 다시 그려주는(불러오는) 함수
+        function importPolygon() {
+            var textData = document.getElementById('dataIO').value;
+            if (!textData) {
+                alert("불러올 데이터(텍스트)를 위에 붙여넣어 주세요.");
+                return;
+            }
+            try {
+                var geojson = JSON.parse(textData);
+                // 네이버 지도 데이터 레이어에 GeoJSON 정보 추가 (색상 지정)
+                map.data.addGeoJson(geojson);
+                map.data.setStyle(function(feature) {
+                    return {
+                        fillColor: '#0055ff', // 불러온 폴리곤은 파란색으로 표시
+                        fillOpacity: 0.3,
+                        strokeColor: '#0055ff',
+                        strokeWeight: 2
+                    };
+                });
+                alert("구역을 성공적으로 불러왔습니다!");
+            } catch (e) {
+                alert("데이터 형식이 잘못되었습니다. 복사한 텍스트를 확인해주세요.");
+            }
+        }
+    </script>
+</body>
+</html>
