@@ -1,40 +1,55 @@
 <!DOCTYPE html>
-<html>
+<html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>천안 직산 폴리곤 누적 지도 (완성본)</title>
+    <title>천안 직산 폴리곤 프로 버전</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    
     <!-- 본인의 Client ID 입력 -->
     <script type="text/javascript" src="https://openapi.map.naver.com/openapi/v3/maps.js?ncpClientId=rcr72nudd5&submodules=drawing"></script>
+    
     <style>
-        body { font-family: 'Malgun Gothic', sans-serif; margin: 10px; background-color: #f8f9fa; }
-        .control-panel { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 10px; }
-        .btn { padding: 12px; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; margin-right: 5px; margin-bottom: 5px;}
+        /* 화면 스크롤 완벽 제거 및 꽉 찬 화면 설정 */
+        html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; font-family: 'Malgun Gothic', sans-serif; }
+        #map { width: 100%; height: 100%; }
+        
+        /* 메뉴창을 지도 위에 띄우기 (플로팅 디자인) */
+        .control-panel {
+            position: absolute; top: 15px; left: 50px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.95); padding: 15px; 
+            border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            max-width: 90%;
+        }
+        .color-picker-wrap {
+            display: flex; align-items: center; margin-bottom: 15px; font-weight: bold; font-size: 15px;
+        }
+        .btn { padding: 10px 15px; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; margin-right: 5px;}
         .btn-save { background-color: #ff4c4c; } 
         .btn-load { background-color: #4a90e2; } 
         .btn-reset { background-color: #6c757d; }
-        .guide-text { font-size: 13px; color: #555; margin-top: 10px; line-height: 1.5; }
+        .guide-text { font-size: 12px; color: #555; margin-top: 10px; line-height: 1.4; }
     </style>
 </head>
 <body>
+    
+    <!-- 플로팅 메뉴창 -->
     <div class="control-panel">
+        <div class="color-picker-wrap">
+            🎨 다각형 색상 선택: 
+            <input type="color" id="polyColor" value="#ff0000" style="margin-left:10px; cursor:pointer; width:40px; height:30px; border:none;">
+        </div>
         <div>
-            <button id="btnSave" class="btn btn-save" onclick="saveToGoogleSheet()">
-                1. 새로 그린 구역 구글시트에 저장하기
-            </button>
-            <button id="btnLoad" class="btn btn-load" onclick="loadFromGoogleSheet()">
-                2. 구글시트에서 저장된 모든 구역 불러오기
-            </button>
-            <button class="btn btn-reset" onclick="location.reload()">
-                3. 화면 전체 지우기 (새로고침)
-            </button>
+            <button id="btnSave" class="btn btn-save" onclick="saveToGoogleSheet()">💾 새로 그린 구역 저장</button>
+            <button id="btnLoad" class="btn btn-load" onclick="loadFromGoogleSheet()">📂 시트에서 모두 불러오기</button>
+            <button class="btn btn-reset" onclick="location.reload()">🔄 화면 초기화</button>
         </div>
         <div class="guide-text">
-            <strong>💡 가이드:</strong> 다각형을 그리면 이름(예: 202번 태조구역)을 묻는 창이 뜹니다. 우클릭 시 삭제 가능.
+            * <strong>완료:</strong> 더블클릭 (엔터키 불가) / <strong>삭제:</strong> 구역 위에서 우클릭
         </div>
     </div>
 
-    <!-- 지도 영역 -->
-    <div id="map" style="width:100%; height:750px; border:1px solid #ccc; border-radius: 8px;"></div>
+    <!-- 꽉 찬 지도 영역 -->
+    <div id="map"></div>
 
     <script>
         // 본인의 웹 앱 URL 입력
@@ -45,18 +60,29 @@
             zoom: 14 
         });
 
-        var drawingManager; // 전역 변수로 선언
+        var drawingManager;
 
-        // ==========================================
-        // [핵심 수정] 지도가 100% 로딩된 '이후에' 그리기 도구를 띄우도록 대기 명령 추가
-        // ==========================================
         naver.maps.Event.once(map, 'init', function() {
             
+            // 초기 그리기 도구 설정 (기본색: 빨강)
             drawingManager = new naver.maps.drawing.DrawingManager({
                 map: map,
                 drawingControl: [naver.maps.drawing.DrawingMode.POLYGON],
                 drawingControlOptions: { position: naver.maps.Position.TOP_LEFT },
                 polygonOptions: { fillColor: '#ff0000', fillOpacity: 0.4, strokeColor: '#ff0000', strokeWeight: 2 }
+            });
+
+            // ==========================================
+            // [새로운 기능] 색상 선택기가 바뀔 때마다 그리기 색상 즉시 변경
+            // ==========================================
+            document.getElementById('polyColor').addEventListener('change', function(e) {
+                var selectedColor = e.target.value;
+                drawingManager.setOptions({
+                    polygonOptions: { 
+                        fillColor: selectedColor, fillOpacity: 0.4, 
+                        strokeColor: selectedColor, strokeWeight: 2 
+                    }
+                });
             });
 
             // 빨간 원점 + 텍스트 마커 생성 함수
@@ -78,24 +104,26 @@
                 });
             }
 
-            // 도형을 다 그렸을 때 이벤트 (이름표 생성 및 클릭/우클릭 이벤트)
+            // 도형을 다 그렸을 때 이벤트
             drawingManager.addListener('drawing_added', function(e) {
                 var overlay = e.overlay;
                 
                 if (e.drawingType === naver.maps.drawing.DrawingMode.POLYGON) {
-                    var text = prompt("구역 이름을 입력하세요 (예: 202번 태조구역)\n* 취소하면 이름 없이 그려집니다.", "");
-                    
-                    if (text) {
-                        var size = prompt("글자 크기를 숫자로만 입력하세요 (기본 14)", "14");
-                        size = size ? size.replace(/[^0-9]/g, '') : "14"; 
-                        if(size === "") size = "14";
-
-                        overlay.customText = text;
-                        overlay.customSize = size;
+                    setTimeout(function() {
+                        var text = prompt("구역 이름을 입력하세요 (예: 202번 태조구역)\n* 취소하면 이름 없이 그려집니다.", "");
                         
-                        var center = overlay.getBounds().getCenter();
-                        overlay.labelMarker = createLabelMarker(text, size, center);
-                    }
+                        if (text) {
+                            var size = prompt("글자 크기를 숫자로만 입력하세요 (기본 14)", "14");
+                            size = size ? size.replace(/[^0-9]/g, '') : "14"; 
+                            if(size === "") size = "14";
+
+                            overlay.customText = text;
+                            overlay.customSize = size;
+                            
+                            var center = overlay.getBounds().getCenter();
+                            overlay.labelMarker = createLabelMarker(text, size, center);
+                        }
+                    }, 100);
                 }
 
                 naver.maps.Event.addListener(overlay, 'click', function() {
@@ -111,14 +139,9 @@
             });
         });
 
-        // ==========================================
-        // 1. 구글 시트에 저장 함수
-        // ==========================================
+        // 1. 구글 시트에 저장 함수 (선택한 색상 정보도 함께 저장)
         function saveToGoogleSheet() {
-            if (!drawingManager) {
-                alert("지도가 아직 로딩 중입니다. 잠시 후 다시 시도해주세요.");
-                return;
-            }
+            if (!drawingManager) return;
 
             var polygons = drawingManager.getOverlays()[naver.maps.drawing.DrawingMode.POLYGON] || [];
             var featureList = [];
@@ -135,6 +158,9 @@
                         properties: {}
                     };
 
+                    // 색상과 텍스트 정보를 속성에 저장
+                    feature.properties.color = poly.getOptions('fillColor'); // 현재 칠해진 색상 저장
+                    
                     if (poly.customText) {
                         feature.properties.text = poly.customText;
                         feature.properties.size = poly.customSize;
@@ -157,18 +183,16 @@
             })
             .then(response => response.text())
             .then(result => {
-                alert("구역과 이름표가 구글 시트에 성공적으로 저장되었습니다!");
-                btn.innerText = "1. 새로 그린 구역 구글시트에 저장하기";
+                alert("색상과 이름표가 포함된 구역이 구글 시트에 저장되었습니다!");
+                btn.innerText = "💾 새로 그린 구역 저장";
             })
             .catch(error => {
                 alert("저장 실패. 인터넷 연결을 확인하세요.");
-                btn.innerText = "1. 새로 그린 구역 구글시트에 저장하기";
+                btn.innerText = "💾 새로 그린 구역 저장";
             });
         }
 
-        // ==========================================
         // 2. 구글 시트에서 불러오기 함수
-        // ==========================================
         function loadFromGoogleSheet() {
             var btn = document.getElementById('btnLoad');
             btn.innerText = "불러오는 중...";
@@ -178,7 +202,7 @@
             .then(dataList => {
                 if(dataList.length === 0) {
                     alert("구글 시트에 저장된 데이터가 없습니다.");
-                    btn.innerText = "2. 구글시트에서 저장된 모든 구역 불러오기";
+                    btn.innerText = "📂 시트에서 모두 불러오기";
                     return;
                 }
                 
@@ -192,7 +216,6 @@
                         if (text) {
                             var center = feature.getBounds().getCenter();
                             
-                            // 빨간 원점 + 텍스트 마커 생성
                             feature.labelMarker = new naver.maps.Marker({
                                 position: center,
                                 map: map,
@@ -212,8 +235,10 @@
                     });
                 });
 
+                // [핵심 변경] 저장할 때의 색상을 그대로 복원해서 불러옵니다.
                 map.data.setStyle(function(feature) {
-                    return { fillColor: '#0055ff', fillOpacity: 0.3, strokeColor: '#0055ff', strokeWeight: 2 };
+                    var savedColor = feature.getProperty('color') || '#0055ff'; // 색이 없으면 기본 파란색
+                    return { fillColor: savedColor, fillOpacity: 0.4, strokeColor: savedColor, strokeWeight: 2 };
                 });
 
                 map.data.addListener('rightclick', function(e) {
@@ -223,12 +248,12 @@
                     }
                 });
 
-                alert("이름표가 포함된 구역들을 모두 불러왔습니다!");
-                btn.innerText = "2. 구글시트에서 저장된 모든 구역 불러오기";
+                alert("모든 구역을 원래 색상과 함께 불러왔습니다!");
+                btn.innerText = "📂 시트에서 모두 불러오기";
             })
             .catch(error => {
                 alert("불러오기 실패. URL을 다시 확인하세요.");
-                btn.innerText = "2. 구글시트에서 저장된 모든 구역 불러오기";
+                btn.innerText = "📂 시트에서 모두 불러오기";
             });
         }
     </script>
