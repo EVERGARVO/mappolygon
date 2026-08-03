@@ -2,143 +2,238 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>천안 직산 구역지</title>
+    <title>천안 직산 구역 지도</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     
-    <!-- 본인의 Client ID 입력 -->
-    <script type="text/javascript" src="https://openapi.map.naver.com/openapi/v3/maps.js?ncpClientId=rcr72nudd5&submodules=drawing"></script>
+    <!-- 네이버 지도 API (그리기 서브모듈 불필요) -->
+    <script type="text/javascript" src="https://openapi.map.naver.com/openapi/v3/maps.js?ncpClientId=rcr72nudd5"></script>
     
     <style>
-        /* 화면 스크롤 완벽 제거 */
-        html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; font-family: 'Malgun Gothic', sans-serif; }
+        html, body { 
+            width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; 
+            font-family: 'Malgun Gothic', sans-serif; 
+            -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; 
+            -webkit-touch-callout: none;
+        }
         #map { width: 100%; height: 100%; }
         
         .control-panel {
-            position: absolute; top: 15px; left: 50px; z-index: 1000;
+            position: absolute; top: 15px; left: 15px; z-index: 1000;
             background: rgba(255, 255, 255, 0.95); padding: 15px; 
             border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-            max-width: 90%;
+            max-width: 95%;
         }
         .color-picker-wrap { display: flex; align-items: center; margin-bottom: 15px; font-weight: bold; font-size: 15px; }
-        .btn { padding: 10px 15px; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; margin-right: 5px;}
+        .btn { padding: 10px 15px; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; margin-right: 5px; margin-bottom: 5px;}
+        
+        .btn-draw { background-color: #333; width: 100%; margin-bottom: 15px; font-size: 15px; } 
         .btn-save { background-color: #ff4c4c; } 
         .btn-load { background-color: #4a90e2; } 
         .btn-reset { background-color: #6c757d; }
-        .guide-text { font-size: 12px; color: #555; margin-top: 10px; line-height: 1.4; }
+        .guide-text { font-size: 12px; color: #333; margin-top: 10px; line-height: 1.4; font-weight: bold;}
     </style>
 </head>
 <body>
     
     <div class="control-panel">
+        <button id="btnDrawToggle" class="btn btn-draw" onclick="toggleClickMode()">
+            📍 점 찍어서 구역 만들기 모드 (현재: 꺼짐)
+        </button>
+        
         <div class="color-picker-wrap">
             🎨 다각형 색상 선택: 
             <input type="color" id="polyColor" value="#ff0000" style="margin-left:10px; cursor:pointer; width:40px; height:30px; border:none;">
         </div>
+        
         <div>
             <button id="btnSave" class="btn btn-save" onclick="saveToGoogleSheet()">💾 새로 그린 구역 저장</button>
-            <button id="btnLoad" class="btn btn-load" onclick="loadFromGoogleSheet()">📂 시트에서 모두 불러오기</button>
-            <button class="btn btn-reset" onclick="location.reload()">🔄 화면 초기화</button>
+            <button id="btnLoad" class="btn btn-load" onclick="loadFromGoogleSheet()">📂 시트에서 불러오기</button>
+            <button class="btn btn-reset" onclick="location.reload()">🔄 초기화</button>
         </div>
         <div class="guide-text">
-            * <strong>완료:</strong> 더블클릭 또는 시작점 클릭 / <strong>삭제:</strong> 구역 우클릭
+            ✔️ <b>방법:</b> 점을 콕콕 찍어가다 <b>처음 찍은 점을 다시 클릭</b>하거나 <b>더블클릭</b>하면 완료!<br>
+            ✔️ <b>삭제:</b> 구역 위에서 마우스 <b>오른쪽 버튼</b> 클릭
         </div>
     </div>
 
     <div id="map"></div>
 
     <script>
-        // 본인의 웹 앱 URL 입력
         const GOOGLE_API_URL = "https://script.google.com/macros/s/AKfycbypFjIa8sJlSvb5AXbERjpydxJUeM3m6GzVAqQdcxqIfIHiWZweYQn9WD3nccRO2pdPOA/exec";
 
-        // ==========================================
-        // [수정된 부분] disableDoubleClickZoom: true 를 추가하여 지도 줌인 방지
-        // ==========================================
+        document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+
         var map = new naver.maps.Map('map', {
             center: new naver.maps.LatLng(36.8850, 127.1436), // 직산역
             zoom: 14,
             disableDoubleClickZoom: true 
         });
 
-        var drawingManager;
+        // ==========================================
+        // [클릭 점 잇기 엔진]
+        // ==========================================
+        var isClickMode = false;
+        var currentPoints = [];       // 현재 찍고 있는 점들의 좌표 목록
+        var tempPolyline = null;      // 따라다니는 실시간 선
+        var tempMarkers = [];         // 찍은 자리에 생기는 작은 점 마커들
+        var customPolygons = [];      // 완성된 다각형 보관 통
 
-        naver.maps.Event.once(map, 'init', function() {
-            
-            drawingManager = new naver.maps.drawing.DrawingManager({
-                map: map,
-                drawingControl: [naver.maps.drawing.DrawingMode.POLYGON],
-                drawingControlOptions: { position: naver.maps.Position.TOP_LEFT },
-                polygonOptions: { fillColor: '#ff0000', fillOpacity: 0.4, strokeColor: '#ff0000', strokeWeight: 2 }
-            });
+        function toggleClickMode() {
+            isClickMode = !isClickMode;
+            var btn = document.getElementById('btnDrawToggle');
+            if (isClickMode) {
+                btn.style.backgroundColor = "#28a745"; // 초록색 켜짐
+                btn.innerText = "📍 점 찍기 모드 켜짐 (지도를 클릭하세요!)";
+                map.setOptions('draggable', false); 
+                map.setCursor('crosshair');
+            } else {
+                btn.style.backgroundColor = "#333";
+                btn.innerText = "📍 점 찍어서 구역 만들기 모드 (현재: 꺼짐)";
+                map.setOptions('draggable', true);
+                map.setCursor('auto');
+                resetCurrentDrawing(); // 모드 끌 때 그리던 거 초기화
+            }
+        }
 
-            document.getElementById('polyColor').addEventListener('change', function(e) {
-                var selectedColor = e.target.value;
-                drawingManager.setOptions({
-                    polygonOptions: { 
-                        fillColor: selectedColor, fillOpacity: 0.4, 
-                        strokeColor: selectedColor, strokeWeight: 2 
-                    }
-                });
-            });
+        // 지도 클릭 시 점 찍기
+        naver.maps.Event.addListener(map, 'click', function(e) {
+            if (!isClickMode) return;
 
-            function createLabelMarker(text, size, position) {
-                return new naver.maps.Marker({
-                    position: position,
-                    map: map,
-                    icon: {
-                        content: `
-                            <div style="display:flex; align-items:center; transform: translate(-50%, -50%);">
-                                <div style="width:12px; height:12px; background-color:red; border-radius:50%; border:2px solid white; box-shadow: 0 0 4px rgba(0,0,0,0.6);"></div>
-                                <div style="margin-left:6px; font-size:${size}px; font-weight:bold; color:#222; background:rgba(255,255,255,0.9); padding:3px 8px; border-radius:5px; border:1px solid #aaa; white-space:nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.15);">
-                                    ${text}
-                                </div>
-                            </div>
-                        `,
-                        anchor: new naver.maps.Point(0, 0)
-                    }
-                });
+            var clickedCoord = e.coord;
+            var selectedColor = document.getElementById('polyColor').value;
+
+            // 만약 점이 3개 이상이고, 첫 번째 점 근처를 다시 클릭했다면 다각형 완성!
+            if (currentPoints.length >= 3) {
+                var firstPoint = currentPoints[0];
+                // 첫 점과의 거리가 아주 가까우면 (약 15미터 이내) 시작점을 다시 누른 것으로 판정
+                var dist = Math.abs(firstPoint.lat() - clickedCoord.lat()) + Math.abs(firstPoint.lng() - clickedCoord.lng());
+                if (dist < 0.00015) {
+                    finishPolygon();
+                    return;
+                }
             }
 
-            drawingManager.addListener('drawing_added', function(e) {
-                var overlay = e.overlay;
-                
-                if (e.drawingType === naver.maps.drawing.DrawingMode.POLYGON) {
-                    setTimeout(function() {
-                        var text = prompt("구역 이름을 입력하세요 (예: 202번 태조구역)\n* 취소하면 이름 없이 그려집니다.", "");
-                        
-                        if (text) {
-                            var size = prompt("글자 크기를 숫자로만 입력하세요 (기본 14)", "14");
-                            size = size ? size.replace(/[^0-9]/g, '') : "14"; 
-                            if(size === "") size = "14";
+            // 점 추가
+            currentPoints.push(clickedCoord);
 
-                            overlay.customText = text;
-                            overlay.customSize = size;
-                            
-                            var center = overlay.getBounds().getCenter();
-                            overlay.labelMarker = createLabelMarker(text, size, center);
-                        }
-                    }, 100);
+            // 찍은 자리에 작은 원 마커 표시
+            var marker = new naver.maps.Marker({
+                position: clickedCoord,
+                map: map,
+                icon: {
+                    content: '<div style="width:8px; height:8px; background:white; border:2px solid ' + selectedColor + '; border-radius:50%;"></div>',
+                    anchor: new naver.maps.Point(4, 4)
                 }
-
-                naver.maps.Event.addListener(overlay, 'click', function() {
-                    if (typeof overlay.getEditable === 'function') overlay.setEditable(!overlay.getEditable());
-                });
-
-                naver.maps.Event.addListener(overlay, 'rightclick', function() {
-                    if (confirm("이 구역과 이름표를 삭제하시겠습니까?")) {
-                        overlay.setMap(null); 
-                        if (overlay.labelMarker) overlay.labelMarker.setMap(null); 
-                    }
-                });
             });
+            tempMarkers.push(marker);
+
+            // 실시간 따라다니는 선 갱신
+            if (!tempPolyline) {
+                tempPolyline = new naver.maps.Polyline({
+                    map: map,
+                    path: currentPoints,
+                    strokeColor: selectedColor,
+                    strokeWeight: 3
+                });
+            } else {
+                tempPolyline.setPath(currentPoints);
+            }
         });
 
-        function saveToGoogleSheet() {
-            if (!drawingManager) return;
+        // 더블클릭 시에도 다각형 강제 완성 기능 추가
+        naver.maps.Event.addListener(map, 'dblclick', function(e) {
+            if (!isClickMode) return;
+            if (currentPoints.length >= 3) {
+                finishPolygon();
+            }
+        });
 
-            var polygons = drawingManager.getOverlays()[naver.maps.drawing.DrawingMode.POLYGON] || [];
+        // 다각형 완성 처리 함수
+        function finishPolygon() {
+            if (currentPoints.length < 3) return;
+
+            var selectedColor = document.getElementById('polyColor').value;
+            
+            // 다각형 생성
+            var polygon = new naver.maps.Polygon({
+                map: map,
+                paths: [currentPoints],
+                fillColor: selectedColor,
+                fillOpacity: 0.4,
+                strokeColor: selectedColor,
+                strokeWeight: 2,
+                clickable: true
+            });
+            
+            customPolygons.push(polygon);
+
+            // 임시 선과 점 마커들 청소
+            clearTempDrawings();
+
+            // 이름 묻기 창 띄우기
+            setTimeout(function() {
+                var text = prompt("구역 이름을 입력하세요 (예: 202번 태조구역)\n* 취소하면 이름 없이 그려집니다.", "");
+                if (text) {
+                    var size = prompt("글자 크기를 숫자로만 입력하세요 (기본 14)", "14");
+                    size = size ? size.replace(/[^0-9]/g, '') : "14"; 
+                    if(size === "") size = "14";
+
+                    polygon.customText = text;
+                    polygon.customSize = size;
+                    
+                    var center = polygon.getBounds().getCenter();
+                    polygon.labelMarker = createLabelMarker(text, size, center);
+                }
+            }, 100);
+
+            // 우클릭 시 삭제 기능
+            naver.maps.Event.addListener(polygon, 'rightclick', function() {
+                if (confirm("이 구역과 이름표를 삭제하시겠습니까?")) {
+                    polygon.setMap(null);
+                    if (polygon.labelMarker) polygon.labelMarker.setMap(null);
+                    customPolygons = customPolygons.filter(p => p !== polygon);
+                }
+            });
+        }
+
+        // 임시로 그리던 선/점 초기화
+        function clearTempDrawings() {
+            if (tempPolyline) { tempPolyline.setMap(null); tempPolyline = null; }
+            tempMarkers.forEach(m => m.setMap(null));
+            tempMarkers = [];
+            currentPoints = [];
+        }
+
+        function resetCurrentDrawing() {
+            clearTempDrawings();
+        }
+
+        // 이름표 생성 함수
+        function createLabelMarker(text, size, position) {
+            return new naver.maps.Marker({
+                position: position,
+                map: map,
+                icon: {
+                    content: `
+                        <div style="display:flex; align-items:center; transform: translate(-50%, -50%);">
+                            <div style="width:12px; height:12px; background-color:red; border-radius:50%; border:2px solid white; box-shadow: 0 0 4px rgba(0,0,0,0.6);"></div>
+                            <div style="margin-left:6px; font-size:${size}px; font-weight:bold; color:#222; background:rgba(255,255,255,0.9); padding:3px 8px; border-radius:5px; border:1px solid #aaa; white-space:nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.15);">
+                                ${text}
+                            </div>
+                        </div>
+                    `,
+                    anchor: new naver.maps.Point(0, 0)
+                }
+            });
+        }
+
+        // ==========================================
+        // 저장 및 불러오기 엔진
+        // ==========================================
+        function saveToGoogleSheet() {
             var featureList = [];
 
-            polygons.forEach(function(poly) {
+            customPolygons.forEach(function(poly) {
                 if (poly.getMap() !== null) { 
                     var paths = poly.getPaths().getArray()[0].getArray();
                     var coords = paths.map(function(ll) { return [ll.lng(), ll.lat()]; });
@@ -174,11 +269,11 @@
             })
             .then(response => response.text())
             .then(result => {
-                alert("색상과 이름표가 포함된 구역이 구글 시트에 저장되었습니다!");
+                alert("색상과 이름표가 포함된 구역이 저장되었습니다!");
                 btn.innerText = "💾 새로 그린 구역 저장";
             })
             .catch(error => {
-                alert("저장 실패. 인터넷 연결을 확인하세요.");
+                alert("저장 실패. 웹 앱 URL을 확인하세요.");
                 btn.innerText = "💾 새로 그린 구역 저장";
             });
         }
@@ -192,7 +287,7 @@
             .then(dataList => {
                 if(dataList.length === 0) {
                     alert("구글 시트에 저장된 데이터가 없습니다.");
-                    btn.innerText = "📂 시트에서 모두 불러오기";
+                    btn.innerText = "📂 시트에서 불러오기";
                     return;
                 }
                 
@@ -205,22 +300,7 @@
                         var size = feature.getProperty('size');
                         if (text) {
                             var center = feature.getBounds().getCenter();
-                            
-                            feature.labelMarker = new naver.maps.Marker({
-                                position: center,
-                                map: map,
-                                icon: {
-                                    content: `
-                                        <div style="display:flex; align-items:center; transform: translate(-50%, -50%);">
-                                            <div style="width:12px; height:12px; background-color:red; border-radius:50%; border:2px solid white; box-shadow: 0 0 4px rgba(0,0,0,0.6);"></div>
-                                            <div style="margin-left:6px; font-size:${size}px; font-weight:bold; color:#222; background:rgba(255,255,255,0.9); padding:3px 8px; border-radius:5px; border:1px solid #aaa; white-space:nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.15);">
-                                                ${text}
-                                            </div>
-                                        </div>
-                                    `,
-                                    anchor: new naver.maps.Point(0, 0)
-                                }
-                            });
+                            feature.labelMarker = createLabelMarker(text, size, center);
                         }
                     });
                 });
@@ -238,11 +318,11 @@
                 });
 
                 alert("모든 구역을 원래 색상과 함께 불러왔습니다!");
-                btn.innerText = "📂 시트에서 모두 불러오기";
+                btn.innerText = "📂 시트에서 불러오기";
             })
             .catch(error => {
-                alert("불러오기 실패. URL을 다시 확인하세요.");
-                btn.innerText = "📂 시트에서 모두 불러오기";
+                alert("불러오기 실패. URL을 확인하세요.");
+                btn.innerText = "📂 시트에서 불러오기";
             });
         }
     </script>
