@@ -2,36 +2,221 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>원인 파악용 자동 진단</title>
-    <!-- YOUR_CLIENT_ID 부분만 수정하세요 -->
+    <title>천안 직산 폴리곤 누적 지도 (이름표 기능 포함)</title>
+    <!-- 1. 본인의 네이버 지도 Client ID를 넣으세요 -->
     <script type="text/javascript" src="https://openapi.map.naver.com/openapi/v3/maps.js?ncpClientId=rcr72nudd5&submodules=drawing"></script>
+    <style>
+        body { font-family: 'Malgun Gothic', sans-serif; margin: 10px; background-color: #f8f9fa; }
+        .control-panel { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 10px; }
+        .btn { padding: 12px; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; margin-right: 5px; margin-bottom: 5px;}
+        .btn-save { background-color: #ff4c4c; } 
+        .btn-load { background-color: #4a90e2; } 
+        .btn-reset { background-color: #6c757d; }
+        .guide-text { font-size: 13px; color: #555; margin-top: 10px; line-height: 1.5; }
+    </style>
 </head>
 <body>
-    <div id="map" style="width:100%; height:800px;"></div>
+    <div class="control-panel">
+        <div>
+            <button id="btnSave" class="btn btn-save" onclick="saveToGoogleSheet()">
+                1. 새로 그린 구역 구글시트에 저장하기
+            </button>
+            <button id="btnLoad" class="btn btn-load" onclick="loadFromGoogleSheet()">
+                2. 구글시트에서 저장된 모든 구역 불러오기
+            </button>
+            <button class="btn btn-reset" onclick="location.reload()">
+                3. 화면 전체 지우기 (새로고침)
+            </button>
+        </div>
+        <div class="guide-text">
+            <strong>💡 다각형 및 이름표 가이드</strong><br>
+            - 다각형을 완성하면 이름을 묻는 창이 뜹니다. (이름을 입력해야 빨간 원점과 텍스트가 표시됩니다.)<br>
+            - 구역을 마우스로 <b>우클릭</b>하면 도형과 이름표가 함께 삭제됩니다.
+        </div>
+    </div>
+
+    <!-- 지도 영역 -->
+    <div id="map" style="width:100%; height:750px; border:1px solid #ccc; border-radius: 8px;"></div>
 
     <script>
+        // 2. 구글 앱스 스크립트 '웹 앱 URL'을 따옴표 안에 넣으세요.
+        const GOOGLE_API_URL = "https://script.google.com/macros/s/AKfycbypFjIa8sJlSvb5AXbERjpydxJUeM3m6GzVAqQdcxqIfIHiWZweYQn9WD3nccRO2pdPOA/exec";
+
         var map = new naver.maps.Map('map', {
-            center: new naver.maps.LatLng(36.8850, 127.1436),
+            center: new naver.maps.LatLng(36.8850, 127.1436), // 직산역
             zoom: 14 
         });
 
-        // 지도가 다 켜진 후 진단을 시작합니다.
-        naver.maps.Event.once(map, 'init', function() {
-            
-            // 1. 네이버 지도 drawing 모듈이 다운로드 되었는지 검사
-            if (typeof naver.maps.drawing === 'undefined') {
-                alert("🚨 [에러 발견] 그리기 도구가 다운로드되지 않았습니다!\n\n가장 유력한 원인 2가지:\n1. Client ID 양옆에 따옴표('')를 넣었거나 띄어쓰기가 들어갔습니다.\n2. 메모장/에디터가 &submodules 부분을 &amp;submodules 로 멋대로 바꿔버렸습니다.");
-            } 
-            else {
-                alert("✅ [정상] 그리기 도구가 완벽하게 로드되었습니다! 이제 화면에 그려집니다.");
-                
-                var drawingManager = new naver.maps.drawing.DrawingManager({
-                    map: map,
-                    drawingControl: [naver.maps.drawing.DrawingMode.POLYGON],
-                    drawingControlOptions: { position: naver.maps.Position.TOP_LEFT }
-                });
-            }
+        var drawingManager = new naver.maps.drawing.DrawingManager({
+            map: map,
+            drawingControl: [naver.maps.drawing.DrawingMode.POLYGON],
+            drawingControlOptions: { position: naver.maps.Position.TOP_LEFT },
+            polygonOptions: { fillColor: '#ff0000', fillOpacity: 0.4, strokeColor: '#ff0000', strokeWeight: 2 }
         });
+
+        // ==========================================
+        // [새로운 기능] 예쁜 텍스트 마커(빨간 원점 + 글자)를 생성하는 함수
+        // ==========================================
+        function createLabelMarker(text, size, position) {
+            return new naver.maps.Marker({
+                position: position,
+                map: map,
+                icon: {
+                    content: `
+                        <div style="display:flex; align-items:center; transform: translate(-50%, -50%);">
+                            <div style="width:12px; height:12px; background-color:red; border-radius:50%; border:2px solid white; box-shadow: 0 0 4px rgba(0,0,0,0.6);"></div>
+                            <div style="margin-left:6px; font-size:${size}px; font-weight:bold; color:#222; background:rgba(255,255,255,0.9); padding:3px 8px; border-radius:5px; border:1px solid #aaa; white-space:nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.15);">
+                                ${text}
+                            </div>
+                        </div>
+                    `,
+                    anchor: new naver.maps.Point(0, 0)
+                }
+            });
+        }
+
+        // 다각형을 그렸을 때 실행되는 이벤트
+        drawingManager.addListener('drawing_added', function(e) {
+            var overlay = e.overlay;
+            
+            if (e.drawingType === naver.maps.drawing.DrawingMode.POLYGON) {
+                // 1. 텍스트 입력창 띄우기
+                var text = prompt("구역 이름을 입력하세요 (예: 202번 태조구역)\n* 취소하면 이름 없이 그려집니다.", "");
+                
+                if (text) {
+                    // 2. 글자 크기 입력창 띄우기 (기본값 14)
+                    var size = prompt("글자 크기를 숫자로만 입력하세요 (기본 14)", "14");
+                    size = size ? size.replace(/[^0-9]/g, '') : "14"; // 숫자만 남기기
+                    if(size === "") size = "14";
+
+                    // 도형 객체에 텍스트와 크기 정보 몰래 숨겨두기 (저장용)
+                    overlay.customText = text;
+                    overlay.customSize = size;
+                    
+                    // 도형의 정중앙 좌표를 계산하여 이름표 마커 달기
+                    var center = overlay.getBounds().getCenter();
+                    overlay.labelMarker = createLabelMarker(text, size, center);
+                }
+            }
+
+            // 편집 모드 (좌클릭)
+            naver.maps.Event.addListener(overlay, 'click', function() {
+                if (typeof overlay.getEditable === 'function') overlay.setEditable(!overlay.getEditable());
+            });
+
+            // 도형 삭제 (우클릭)
+            naver.maps.Event.addListener(overlay, 'rightclick', function() {
+                if (confirm("이 구역과 이름표를 삭제하시겠습니까?")) {
+                    overlay.setMap(null); // 도형 삭제
+                    if (overlay.labelMarker) overlay.labelMarker.setMap(null); // 이름표도 함께 삭제
+                }
+            });
+        });
+
+        // ==========================================
+        // 1. 구글 시트 저장 (텍스트 정보 포함되게 개조된 커스텀 추출 함수)
+        // ==========================================
+        function saveToGoogleSheet() {
+            var polygons = drawingManager.getOverlays()[naver.maps.drawing.DrawingMode.POLYGON] || [];
+            var featureList = [];
+
+            // 화면에 보이는 다각형만 찾아서 좌표와 텍스트를 포장
+            polygons.forEach(function(poly) {
+                if (poly.getMap() !== null) { // 삭제되지 않은 도형만
+                    var paths = poly.getPaths().getArray()[0].getArray();
+                    var coords = paths.map(function(ll) { return [ll.lng(), ll.lat()]; });
+                    coords.push(coords[0]); // 다각형 좌표 닫기
+
+                    var feature = {
+                        type: "Feature",
+                        geometry: { type: "Polygon", coordinates: [coords] },
+                        properties: {}
+                    };
+
+                    // 텍스트 정보가 있으면 속성(properties)에 추가
+                    if (poly.customText) {
+                        feature.properties.text = poly.customText;
+                        feature.properties.size = poly.customSize;
+                    }
+                    featureList.push(feature);
+                }
+            });
+
+            if (featureList.length === 0) {
+                alert("지도에 저장할 새로운 구역이 없습니다!"); return;
+            }
+
+            var btn = document.getElementById('btnSave');
+            btn.innerText = "저장 중입니다...";
+            
+            fetch(GOOGLE_API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify({ type: "FeatureCollection", features: featureList })
+            })
+            .then(response => response.text())
+            .then(result => {
+                alert("구역과 이름표가 구글 시트에 성공적으로 저장되었습니다!");
+                btn.innerText = "1. 새로 그린 구역 구글시트에 저장하기";
+            })
+            .catch(error => {
+                alert("저장 실패. 인터넷 연결을 확인하세요.");
+                btn.innerText = "1. 새로 그린 구역 구글시트에 저장하기";
+            });
+        }
+
+        // ==========================================
+        // 2. 구글 시트에서 불러오기
+        // ==========================================
+        function loadFromGoogleSheet() {
+            var btn = document.getElementById('btnLoad');
+            btn.innerText = "불러오는 중...";
+
+            fetch(GOOGLE_API_URL)
+            .then(response => response.json())
+            .then(dataList => {
+                if(dataList.length === 0) {
+                    alert("구글 시트에 저장된 데이터가 없습니다.");
+                    btn.innerText = "2. 구글시트에서 저장된 모든 구역 불러오기";
+                    return;
+                }
+                
+                dataList.forEach(textData => {
+                    var geojson = JSON.parse(textData);
+                    var addedFeatures = map.data.addGeoJson(geojson);
+                    
+                    // 불러온 도형들을 하나씩 검사해서 이름표가 있으면 찍어주기
+                    addedFeatures.forEach(function(feature) {
+                        var text = feature.getProperty('text');
+                        var size = feature.getProperty('size');
+                        if (text) {
+                            var center = feature.getBounds().getCenter();
+                            feature.labelMarker = createLabelMarker(text, size, center);
+                        }
+                    });
+                });
+
+                // 불러온 도형은 파란색으로 통일
+                map.data.setStyle(function(feature) {
+                    return { fillColor: '#0055ff', fillOpacity: 0.3, strokeColor: '#0055ff', strokeWeight: 2 };
+                });
+
+                // 불러온 도형 삭제 기능
+                map.data.addListener('rightclick', function(e) {
+                    if(confirm("불러온 구역을 화면에서 숨기시겠습니까?")) {
+                        map.data.removeGeoJson(e.feature);
+                        if (e.feature.labelMarker) e.feature.labelMarker.setMap(null); // 텍스트 마커도 숨김
+                    }
+                });
+
+                alert("이름표가 포함된 구역들을 모두 불러왔습니다!");
+                btn.innerText = "2. 구글시트에서 저장된 모든 구역 불러오기";
+            })
+            .catch(error => {
+                alert("불러오기 실패. URL을 다시 확인하세요.");
+                btn.innerText = "2. 구글시트에서 저장된 모든 구역 불러오기";
+            });
+        }
     </script>
 </body>
 </html>
