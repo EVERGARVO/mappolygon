@@ -2,27 +2,24 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>천안 직산 폴리곤 프로 버전</title>
+    <title>천안 직산 구역지</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     
     <!-- 본인의 Client ID 입력 -->
     <script type="text/javascript" src="https://openapi.map.naver.com/openapi/v3/maps.js?ncpClientId=rcr72nudd5&submodules=drawing"></script>
     
     <style>
-        /* 화면 스크롤 완벽 제거 및 꽉 찬 화면 설정 */
+        /* 화면 스크롤 완벽 제거 */
         html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; font-family: 'Malgun Gothic', sans-serif; }
         #map { width: 100%; height: 100%; }
         
-        /* 메뉴창을 지도 위에 띄우기 (플로팅 디자인) */
         .control-panel {
             position: absolute; top: 15px; left: 50px; z-index: 1000;
             background: rgba(255, 255, 255, 0.95); padding: 15px; 
             border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.2);
             max-width: 90%;
         }
-        .color-picker-wrap {
-            display: flex; align-items: center; margin-bottom: 15px; font-weight: bold; font-size: 15px;
-        }
+        .color-picker-wrap { display: flex; align-items: center; margin-bottom: 15px; font-weight: bold; font-size: 15px; }
         .btn { padding: 10px 15px; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; margin-right: 5px;}
         .btn-save { background-color: #ff4c4c; } 
         .btn-load { background-color: #4a90e2; } 
@@ -32,7 +29,6 @@
 </head>
 <body>
     
-    <!-- 플로팅 메뉴창 -->
     <div class="control-panel">
         <div class="color-picker-wrap">
             🎨 다각형 색상 선택: 
@@ -44,27 +40,29 @@
             <button class="btn btn-reset" onclick="location.reload()">🔄 화면 초기화</button>
         </div>
         <div class="guide-text">
-            * <strong>완료:</strong> 더블클릭 (엔터키 불가) / <strong>삭제:</strong> 구역 위에서 우클릭
+            * <strong>완료:</strong> 더블클릭 또는 시작점 클릭 / <strong>삭제:</strong> 구역 우클릭
         </div>
     </div>
 
-    <!-- 꽉 찬 지도 영역 -->
     <div id="map"></div>
 
     <script>
         // 본인의 웹 앱 URL 입력
         const GOOGLE_API_URL = "https://script.google.com/macros/s/AKfycbypFjIa8sJlSvb5AXbERjpydxJUeM3m6GzVAqQdcxqIfIHiWZweYQn9WD3nccRO2pdPOA/exec";
 
+        // ==========================================
+        // [수정된 부분] disableDoubleClickZoom: true 를 추가하여 지도 줌인 방지
+        // ==========================================
         var map = new naver.maps.Map('map', {
             center: new naver.maps.LatLng(36.8850, 127.1436), // 직산역
-            zoom: 14 
+            zoom: 14,
+            disableDoubleClickZoom: true 
         });
 
         var drawingManager;
 
         naver.maps.Event.once(map, 'init', function() {
             
-            // 초기 그리기 도구 설정 (기본색: 빨강)
             drawingManager = new naver.maps.drawing.DrawingManager({
                 map: map,
                 drawingControl: [naver.maps.drawing.DrawingMode.POLYGON],
@@ -72,9 +70,6 @@
                 polygonOptions: { fillColor: '#ff0000', fillOpacity: 0.4, strokeColor: '#ff0000', strokeWeight: 2 }
             });
 
-            // ==========================================
-            // [새로운 기능] 색상 선택기가 바뀔 때마다 그리기 색상 즉시 변경
-            // ==========================================
             document.getElementById('polyColor').addEventListener('change', function(e) {
                 var selectedColor = e.target.value;
                 drawingManager.setOptions({
@@ -85,7 +80,6 @@
                 });
             });
 
-            // 빨간 원점 + 텍스트 마커 생성 함수
             function createLabelMarker(text, size, position) {
                 return new naver.maps.Marker({
                     position: position,
@@ -104,7 +98,6 @@
                 });
             }
 
-            // 도형을 다 그렸을 때 이벤트
             drawingManager.addListener('drawing_added', function(e) {
                 var overlay = e.overlay;
                 
@@ -139,7 +132,6 @@
             });
         });
 
-        // 1. 구글 시트에 저장 함수 (선택한 색상 정보도 함께 저장)
         function saveToGoogleSheet() {
             if (!drawingManager) return;
 
@@ -158,8 +150,7 @@
                         properties: {}
                     };
 
-                    // 색상과 텍스트 정보를 속성에 저장
-                    feature.properties.color = poly.getOptions('fillColor'); // 현재 칠해진 색상 저장
+                    feature.properties.color = poly.getOptions('fillColor'); 
                     
                     if (poly.customText) {
                         feature.properties.text = poly.customText;
@@ -192,7 +183,6 @@
             });
         }
 
-        // 2. 구글 시트에서 불러오기 함수
         function loadFromGoogleSheet() {
             var btn = document.getElementById('btnLoad');
             btn.innerText = "불러오는 중...";
@@ -235,9 +225,8 @@
                     });
                 });
 
-                // [핵심 변경] 저장할 때의 색상을 그대로 복원해서 불러옵니다.
                 map.data.setStyle(function(feature) {
-                    var savedColor = feature.getProperty('color') || '#0055ff'; // 색이 없으면 기본 파란색
+                    var savedColor = feature.getProperty('color') || '#0055ff'; 
                     return { fillColor: savedColor, fillOpacity: 0.4, strokeColor: savedColor, strokeWeight: 2 };
                 });
 
